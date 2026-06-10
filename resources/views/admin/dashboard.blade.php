@@ -348,11 +348,23 @@
     }
 
     // Format Struk Teks Murni (Aman untuk Printer Thermal 58mm)
+    // Format Struk Teks Murni (Aman untuk Printer Thermal 58mm & Anti Desimal Buntung)
     function buildReceiptText(d) {
         const W = 32;
-        const rp = n => 'Rp' + parseInt(n).toLocaleString('id-ID');
+        
+        // FIX AKURAT: Paksa format ke Rupiah Indonesia asli tanpa desimal float meleset
+        const rp = n => {
+            const num = parseInt(n) || 0;
+            return 'Rp' + num.toLocaleString('id-ID');
+        };
+        
         const c = s => ' '.repeat(Math.max(0, Math.floor((W - s.length) / 2))) + s;
-        const lr = (l, r) => l + ' '.repeat(Math.max(1, W - l.length - r.length)) + r;
+        const lr = (l, r) => {
+            const strL = String(l);
+            const strR = String(r);
+            return strL + ' '.repeat(Math.max(1, W - strL.length - strR.length)) + strR;
+        };
+        
         const H = '--------------------------------';
         const HH = '================================';
 
@@ -363,24 +375,26 @@
             lr('No:', d.no),
             lr('Tgl:', d.date),
             lr('Kasir:', d.cashier),
-            lr('Loket:', d.booth),
+            lr('Loket:', String(d.booth).replace(/loket\s*/i, '')),
             H,
             c('-- RINCIAN TIKET --'),
             H
         ];
 
-        if (d.adult_qty > 0)   lines.push(lr('Dewasa   x' + d.adult_qty, rp(d.adult_price * d.adult_qty)));
-        if (d.child_qty > 0)   lines.push(lr('Anak     x' + d.child_qty, rp(d.child_price * d.child_qty)));
-        if (d.terusan_qty > 0) lines.push(lr('Terusan  x' + d.terusan_qty, rp(d.terusan_price * d.terusan_qty)));
+        if (parseInt(d.adult_qty) > 0)   lines.push(lr('Dewasa   x' + d.adult_qty, rp(parseInt(d.adult_price) * parseInt(d.adult_qty))));
+        if (parseInt(d.child_qty) > 0)   lines.push(lr('Anak     x' + d.child_qty, rp(parseInt(d.child_price) * parseInt(d.child_qty))));
+        if (parseInt(d.terusan_qty) > 0) lines.push(lr('Terusan  x' + d.terusan_qty, rp(parseInt(d.terusan_price) * parseInt(d.terusan_qty))));
 
         lines.push(H);
-        lines.push(lr('TOTAL', rp(d.total_price)));
+        lines.push(lr('TOTAL', rp(parseInt(d.total_price))));
         lines.push(H);
-        lines.push(lr('Metode', d.payment_method));
+        
+        // Kirim string text metode pembayaran murni
+        lines.push(lr('Metode', String(d.payment_method).toUpperCase()));
 
-        if (d.payment_method === 'CASH') {
-            lines.push(lr('Diterima', rp(d.cash_received)));
-            lines.push(lr('Kembalian', rp(Math.max(0, d.cash_change))));
+        if (String(d.payment_method).toUpperCase() === 'CASH') {
+            lines.push(lr('Diterima', rp(parseInt(d.cash_received))));
+            lines.push(lr('Kembalian', rp(Math.max(0, parseInt(d.cash_change)))));
         }
 
         lines.push(HH);
@@ -389,14 +403,79 @@
         return lines.join('\n');
     }
 
-    // ── Thermal Print via Iframe - PERFECT CALIBRATION FOR 58mm (FIX KEPOTONG) ──
+    // ── Thermal Print - KALIBRASI FINAL ANTI KEPOTONG 1 KARAKTER ──
     function printReceipt() {
         if (!currentPrintData) return;
-        
-        // 1. Ambil teks murni dari generator struk bawaan lo
-        const receiptText = buildReceiptText(currentPrintData);
+        const d = currentPrintData;
+        const formatRp = n => 'Rp ' + parseInt(n).toLocaleString('id-ID');
 
-        // 2. Bikin elemen iframe gaib di latar belakang
+        let ticketRows = '';
+        if (parseInt(d.adult_qty) > 0)   ticketRows += `<tr><td>Dewasa</td><td>x${d.adult_qty}</td></tr>`;
+        if (parseInt(d.child_qty) > 0)   ticketRows += `<tr><td>Anak</td><td>x${d.child_qty}</td></tr>`;
+        if (parseInt(d.terusan_qty) > 0) ticketRows += `<tr><td>Terusan</td><td>x${d.terusan_qty}</td></tr>`;
+
+        let paymentRows = `<tr><td>Metode</td><td>${String(d.payment_method).toUpperCase()}</td></tr>`;
+        if (String(d.payment_method).toUpperCase() === 'CASH') {
+            paymentRows += `<tr><td>Diterima</td><td>${formatRp(d.cash_received)}</td></tr>`;
+            paymentRows += `<tr><td>Kembalian</td><td>${formatRp(d.cash_change)}</td></tr>`;
+        }
+
+        const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+        <style>
+          @page { 
+            size: 58mm auto; 
+            margin: 0; 
+          }
+          * { 
+            margin: 0; padding: 0; 
+            font-family: 'Courier New', monospace; 
+            font-size: 8pt !important; 
+            color: #000; 
+            font-weight: bold; 
+          }
+          body { 
+            width: 41mm !important; /* DIPERSEMPIT LAGI BIAR MAKIN MELEJIT KE TENGAH KERTAS */
+            padding: 4mm 2mm; 
+            background: white; 
+          }
+          .center { text-align: center; }
+          hr { border: none; border-top: 1px dashed #000; margin: 4px 0; }
+          table { width: 100%; border-collapse: collapse; }
+          td { padding: 1.5px 0; }
+          
+          /* FIX SAKTI: Kasih padding kanan 3px biar karakter terakhir ga ngebentur guntingan driver */
+          td:last-child { 
+            text-align: right; 
+            padding-right: 3px !important; 
+          }
+          .total { font-size: 9.5pt !important; font-weight: bold; }
+        </style>
+        </head><body>
+        <div class="center">WISATA GATRA KENCANA</div>
+        <div class="center">Bojongnangka, Pemalang</div>
+        <hr>
+        <table>
+          <tr><td>No</td><td>${d.no}</td></tr>
+          <tr><td>Tgl</td><td>${d.date}</td></tr>
+          <tr><td>Kasir</td><td>${d.cashier}</td></tr>
+          <tr><td>Loket</td><td>${String(d.booth).replace(/loket\s*/i, '')}</td></tr>
+        </table>
+        <hr>
+        <div class="center">-- RINCIAN TIKET --</div>
+        <hr>
+        <table>${ticketRows}</table>
+        <hr>
+        <table>
+          <tr><td class="total">TOTAL</td><td class="total">${formatRp(d.total_price)}</td></tr>
+        </table>
+        <hr>
+        <table>${paymentRows}</table>
+        <hr>
+        <div class="center">Terima kasih!</div>
+        <div class="center">Selamat menikmati wisata</div>
+        <br><br>
+        </body></html>`;
+
         const iframe = document.createElement('iframe');
         iframe.style.position = 'fixed';
         iframe.style.bottom = '0';
@@ -406,52 +485,15 @@
         iframe.style.border = '0';
         document.body.appendChild(iframe);
 
-        // 3. Tulis dokumen HTML khusus struk dengan pembungkus <pre> aman
         const doc = iframe.contentWindow.document;
         doc.open();
-        doc.write(`
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="UTF-8">
-                <title>Cetak Tiket Gatra Kencana</title>
-                <style>
-                    @page {
-                        size: 58mm auto;
-                        margin: 0; /* Menghilangkan margin bawaan browser */
-                    }
-                    html, body {
-                        margin: 0;
-                        padding: 0;
-                        background: white;
-                        color: black;
-                    }
-                    pre {
-                        font-family: 'Courier New', Courier, monospace;
-                        font-size: 8.5pt; /* Ukuran pas agar karakter kanan tidak tergunting */
-                        font-weight: bold;
-                        width: 44mm; /* Lebar aman area teks agar pas di tengah roll kertas */
-                        margin: 0;
-                        padding: 4mm 3mm; /* Memberikan padding agar seimbang di tengah roll */
-                        white-space: pre-wrap; /* Jaga kerapian spasi dan baris */
-                        line-height: 1.3;
-                    }
-                </style>
-            </head>
-            <body><pre>${receiptText}</pre></body>
-            </html>
-        `);
+        doc.write(html);
         doc.close();
 
-        // 4. Picu pencetakan otomatis setelah dom iframe siap
         setTimeout(() => {
             iframe.contentWindow.focus();
             iframe.contentWindow.print();
-            
-            // 5. Hapus sampah iframe setelah dialog cetak selesai/ditutup kasir
-            setTimeout(() => {
-                document.body.removeChild(iframe);
-            }, 1000);
+            setTimeout(() => { document.body.removeChild(iframe); }, 1000);
         }, 300);
     }
 </script>
